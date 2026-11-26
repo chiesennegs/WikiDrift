@@ -177,11 +177,33 @@ details summary { cursor: pointer; color: var(--accent-strong); font-size: .9rem
 .record-dialog { width: min(410px, calc(100% - 36px)); border: 1px solid var(--line); border-radius: 11px; padding: 20px; box-shadow: 0 14px 40px #0c1d3a40; color: var(--ink); }
 .record-dialog::backdrop { background: #06152a70; }
 .revision-picker { width: min(700px, calc(100% - 26px)); max-height: calc(100dvh - 24px); overflow: auto; }
+.revision-picker-anchored[open] {
+  --picker-top: clamp(12px, 7svh, 56px);
+  inset-block: var(--picker-top) auto;
+  margin-block: 0;
+  max-height: calc(100dvh - var(--picker-top) - 12px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.picker-header { flex: 0 0 auto; }
+.picker-content { min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; scrollbar-gutter: stable; }
 .picker-year-controls, .picker-date-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: end; }
+.picker-years {
+  display: flex;
+  gap: 5px;
+  margin-top: 8px;
+  padding: 4px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+}
+.picker-year-chip { flex: 0 0 auto; min-width: 3.5rem; min-height: 36px; padding-inline: 8px; }
+.picker-year-chip[aria-pressed="true"] { color: var(--accent-strong); background: var(--soft-blue); border-color: var(--accent); }
 .picker-chart-head { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 6px 12px; margin-top: 18px; }
 .picker-chart-head :is(h3, p), .picker-day-heading { margin-bottom: 5px; }
 .activity-chart { display: grid; gap: 3px; padding: 4px 0 6px; }
-.activity-months { grid-template-columns: repeat(12, minmax(0, 1fr)); }
+.activity-months { grid-template-columns: repeat(12, minmax(40px, 1fr)); overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; }
 .activity-days { grid-template-columns: repeat(auto-fit, minmax(17px, 1fr)); }
 .activity-bar { min-width: 0; display: flex; align-items: stretch; flex-direction: column; border: 1px solid transparent; border-radius: 5px; padding: 4px 3px; gap: 3px; background: var(--paper); color: var(--muted); }
 .activity-bar:hover { background: var(--soft-blue); }
@@ -228,7 +250,8 @@ details summary { cursor: pointer; color: var(--accent-strong); font-size: .9rem
 }
 
 @media (max-width: 620px) {
-  .activity-months { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .revision-picker-anchored { padding: 14px; }
+  .picker-year-chip { min-height: 44px; }
   .activity-days { grid-template-columns: repeat(7, minmax(0, 1fr)); }
   .search-inner { padding: 44px 0 36px; }
   .start, .pane-grid { grid-template-columns: minmax(0, 1fr); }

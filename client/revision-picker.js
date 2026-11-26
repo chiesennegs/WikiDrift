@@ -19,6 +19,8 @@ export function calendarCount(activity, prefix) {
 
 export function createRevisionPicker({ dialog, api, html, date, author, refreshAuthors, onPick }) {
   const $ = selector => dialog.querySelector(selector);
+  const yearStrip = $("#picker-years");
+  const pickerContent = $("#picker-content") ?? dialog;
   const activityByYear = new Map();
   let articleKey;
   let firstDate;
@@ -27,20 +29,39 @@ export function createRevisionPicker({ dialog, api, html, date, author, refreshA
   let editsRequest;
   let boundsRequest;
   let lookupRequest;
+  let renderedYears;
 
   function yearBounds() {
     const latest = Number(picker.article.latest.date.slice(0, 4));
     return { first: firstDate ? Number(firstDate.slice(0, 4)) : Math.min(2001, latest), last: latest };
   }
 
+  function revealItem(strip, item) {
+    if (!item) return;
+    const viewport = strip.getBoundingClientRect();
+    const rect = item.getBoundingClientRect();
+    if (rect.left < viewport.left + 4) strip.scrollLeft += rect.left - viewport.left - 4;
+    else if (rect.right > viewport.right - 4) strip.scrollLeft += rect.right - viewport.right + 4;
+  }
+
   function renderYear() {
     const { first, last } = yearBounds();
-    const options = [];
-    for (let year = last; year >= first; year -= 1) {
-      options.push(`<option value="${year}">${year}</option>`);
+    const boundsKey = `${first}:${last}`;
+    if (boundsKey !== renderedYears) {
+      const years = Array.from({ length: last - first + 1 }, (_, index) => first + index);
+      $("#picker-year").innerHTML = years.slice().reverse().map(year => `<option value="${year}">${year}</option>`).join("");
+      if (yearStrip) yearStrip.innerHTML = years.map(year => `<button type="button" class="button picker-year-chip" data-picker="year" data-key="${year}">${year}</button>`).join("");
+      renderedYears = boundsKey;
     }
-    $("#picker-year").innerHTML = options.join("");
     $("#picker-year").value = picker.year;
+    if (yearStrip) {
+      for (const button of yearStrip.children) {
+        const selected = Number(button.dataset.key) === picker.year;
+        button.setAttribute("aria-pressed", String(selected));
+        button.tabIndex = selected ? 0 : -1;
+        if (selected) revealItem(yearStrip, button);
+      }
+    }
     $('[data-picker="older-year"]').disabled = picker.year <= first;
     $('[data-picker="newer-year"]').disabled = picker.year >= last;
     $("#picker-date").min = firstDate || "";
@@ -77,6 +98,8 @@ export function createRevisionPicker({ dialog, api, html, date, author, refreshA
     $("#picker-months").innerHTML = monthValues.map(value =>
       bar(value.month, monthName(value.month), `${monthName(value.month, true)} ${year}`, value,
         maxMonth, "month", value.month === picker.month, value.disabled)).join("");
+    const months = $("#picker-months");
+    if (focus?.picker === "month") revealItem(months, months.querySelector('[aria-pressed="true"]'));
     const window = monthWindow(year, picker.month);
     const prefix = window.first.slice(0, 7);
     const dayValues = Array.from({ length: window.days }, (_, index) => {
@@ -199,6 +222,8 @@ export function createRevisionPicker({ dialog, api, html, date, author, refreshA
     } else {
       renderActivity();
     }
+    const months = $("#picker-months");
+    revealItem(months, months.querySelector('[aria-pressed="true"]'));
     const monthEnd = monthWindow(year, month).last;
     $("#picker-date").value = day || (monthEnd > latest.slice(0, 10) ? latest.slice(0, 10) : monthEnd);
     void loadEdits();
@@ -218,6 +243,7 @@ export function createRevisionPicker({ dialog, api, html, date, author, refreshA
       case "close": dialog.close(); break;
       case "older-year": showPeriod(picker.year - 1, picker.month); break;
       case "newer-year": showPeriod(picker.year + 1, picker.month); break;
+      case "year": showPeriod(Number(key), picker.month); break;
       case "month": showPeriod(picker.year, Number(key)); break;
       case "day": showPeriod(picker.year, picker.month, key); break;
       case "more-activity": void loadActivity(); break;
@@ -229,6 +255,26 @@ export function createRevisionPicker({ dialog, api, html, date, author, refreshA
       }
     }
   });
+
+  yearStrip?.addEventListener("keydown", event => {
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
+    const { first, last } = yearBounds();
+    const targetYear = {
+      ArrowLeft: Math.max(first, picker.year - 1), ArrowRight: Math.min(last, picker.year + 1), Home: first, End: last
+    }[event.key];
+    if (targetYear === undefined) return;
+    event.preventDefault();
+    if (targetYear !== picker.year) showPeriod(targetYear, picker.month);
+    yearStrip.querySelector('[aria-pressed="true"]')?.focus({ preventScroll: true });
+  });
+
+  yearStrip?.addEventListener("wheel", event => {
+    if (!event.deltaY || Math.abs(event.deltaX) >= Math.abs(event.deltaY) || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    const step = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? yearStrip.clientWidth : 1;
+    const offset = yearStrip.scrollLeft;
+    yearStrip.scrollLeft += event.deltaY * step;
+    if (yearStrip.scrollLeft !== offset) event.preventDefault();
+  }, { passive: false });
 
   $("#picker-year").addEventListener("change", event => showPeriod(Number(event.target.value), picker.month));
   $("#picker-date-form").addEventListener("submit", async event => {
@@ -271,10 +317,12 @@ export function createRevisionPicker({ dialog, api, html, date, author, refreshA
     $("#picker-title").textContent = side === "from" ? "Choose earlier revision" : "Choose later revision";
     $("#picker-date").value = anchor.slice(0, 10);
     $("#picker-date-status").textContent = "";
-    renderYear();
     dialog.showModal();
-    dialog.scrollTop = 0;
+    pickerContent.scrollTop = 0;
+    renderYear();
     void loadActivity();
+    const months = $("#picker-months");
+    revealItem(months, months.querySelector('[aria-pressed="true"]'));
     void loadEdits();
 
     if (!firstDate) {

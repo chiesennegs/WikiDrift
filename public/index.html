@@ -65,29 +65,34 @@
     <section id="workspace" class="content workspace" aria-label="Article comparison" hidden></section>
     <section id="library" class="content library" aria-label="Library" hidden></section>
     <div id="notification" class="notification" role="status"></div>
-    <dialog id="revision-picker" class="record-dialog revision-picker" aria-labelledby="picker-title">
-      <div class="dialog-top"><h2 id="picker-title"></h2><button type="button" data-picker="close" class="icon-button" aria-label="Close revision picker">×</button></div>
-      <div class="picker-year-controls">
-        <label><span class="field-label">Revision year</span><select id="picker-year"></select></label>
-        <button type="button" class="button" data-picker="older-year">Previous year</button>
-        <button type="button" class="button" data-picker="newer-year">Next year</button>
+    <dialog id="revision-picker" class="record-dialog revision-picker revision-picker-anchored" aria-labelledby="picker-title">
+      <div class="picker-header">
+        <div class="dialog-top"><h2 id="picker-title"></h2><button type="button" data-picker="close" class="icon-button" aria-label="Close revision picker">×</button></div>
+        <div class="picker-year-controls">
+          <label><span class="field-label">Revision year</span><select id="picker-year"></select></label>
+          <button type="button" class="button" data-picker="older-year">Previous year</button>
+          <button type="button" class="button" data-picker="newer-year">Next year</button>
+        </div>
+        <div id="picker-years" class="picker-years" role="group" aria-label="Browse revision years"></div>
       </div>
-      <div class="picker-chart-head"><h3>Monthly edit activity</h3><p id="picker-activity-status" class="muted" role="status"></p></div>
-      <div id="picker-months" class="activity-chart activity-months" role="group" aria-label="Monthly edit counts"></div>
-      <button id="picker-more-activity" type="button" class="button" data-picker="more-activity" hidden>Count earlier edits</button>
-      <h3 id="picker-month-title" class="picker-day-heading"></h3>
-      <div id="picker-days" class="activity-chart activity-days" role="group" aria-labelledby="picker-month-title"></div>
-      <section class="picker-edits" aria-labelledby="picker-edits-title">
-        <h3 id="picker-edits-title"></h3>
-        <p id="picker-edits-status" class="muted" role="status"></p>
-        <ul id="picker-edits-list"></ul>
-        <button id="picker-more-edits" type="button" class="button" data-picker="more-edits" hidden>Older revisions in this period</button>
-      </section>
-      <form id="picker-date-form" class="picker-date-form">
-        <label><span class="field-label">Jump to an exact date (UTC)</span><input id="picker-date" type="date" required></label>
-        <button type="submit" class="button">Use revision on or before date</button>
-        <p id="picker-date-status" class="muted" role="status"></p>
-      </form>
+      <div id="picker-content" class="picker-content">
+        <div class="picker-chart-head"><h3>Monthly edit activity</h3><p id="picker-activity-status" class="muted" role="status"></p></div>
+        <div id="picker-months" class="activity-chart activity-months" role="group" aria-label="Monthly edit counts"></div>
+        <button id="picker-more-activity" type="button" class="button" data-picker="more-activity" hidden>Count earlier edits</button>
+        <h3 id="picker-month-title" class="picker-day-heading"></h3>
+        <div id="picker-days" class="activity-chart activity-days" role="group" aria-labelledby="picker-month-title"></div>
+        <section class="picker-edits" aria-labelledby="picker-edits-title">
+          <h3 id="picker-edits-title"></h3>
+          <p id="picker-edits-status" class="muted" role="status"></p>
+          <ul id="picker-edits-list"></ul>
+          <button id="picker-more-edits" type="button" class="button" data-picker="more-edits" hidden>Older revisions in this period</button>
+        </section>
+        <form id="picker-date-form" class="picker-date-form">
+          <label><span class="field-label">Jump to an exact date (UTC)</span><input id="picker-date" type="date" required></label>
+          <button type="submit" class="button">Use revision on or before date</button>
+          <p id="picker-date-status" class="muted" role="status"></p>
+        </form>
+      </div>
     </dialog>
     <dialog id="record-dialog" class="record-dialog">
       <form id="record-form" method="dialog">
