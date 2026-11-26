@@ -2,7 +2,9 @@
 
 WikiDrift shows how Wikipedia articles change over time and how different language editions cover the same topic. It runs on Cloudflare Workers with Workers AI and stores each reader’s library in their browser.
 
-[Try the public demo](https://wikidrift.demo.mooseaillc.com/).
+## Live demo
+
+[**Open the WikiDrift demo**](https://wikidrift.demo.mooseaillc.com/)
 
 ## Explore
 
