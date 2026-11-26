@@ -2,6 +2,8 @@
 
 WikiDrift shows how Wikipedia articles change over time and how different language editions cover the same topic. It runs on Cloudflare Workers with Workers AI and stores each reader’s library in their browser.
 
+[Try the public demo](https://wikidrift.joelevy.workers.dev/).
+
 ## Explore
 
 - **Revision history** lists edits by date, with author names, edit summaries and links to the original Wikipedia revisions. Select an edit to compare it with its parent. Pick two revisions to compare a longer range and list the contributors between them.
