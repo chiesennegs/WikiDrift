@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Explore changes to Wikipedia articles over time and compare how language editions cover the same topic.">
+  <title>WikiDrift</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+  <script type="module" src="/assets/app.js"></script>
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="/" data-action="home"><span class="brand-mark" aria-hidden="true"></span>Wiki<span>Drift</span></a>
+      <nav aria-label="Main navigation">
+        <button type="button" data-action="home" id="explore-nav" aria-current="page">Explore</button>
+        <button type="button" data-action="library" id="library-nav">Library</button>
+      </nav>
+    </div>
+  </header>
+  <main>
+    <section id="search-area" class="search-area">
+      <div class="search-inner">
+        <div class="hero-copy">
+          <p class="eyebrow"><span class="small-line"></span> Wikipedia comparison</p>
+          <h1>How Wikipedia <em>changes.</em></h1>
+          <p class="hero-description">Trace an article’s edits over time or see how two languages cover the same topic.</p>
+        </div>
+        <form id="search-form" class="search-form" aria-label="Search Wikipedia">
+          <div class="search-language">
+            <label class="sr-only" for="source-language">Wikipedia language</label>
+            <select id="source-language" name="language"><option value="en">English</option></select>
+          </div>
+          <label class="search-input" for="search-query">
+            <span class="search-icon" aria-hidden="true"></span><span class="sr-only">Article title or topic</span>
+            <input id="search-query" name="search" type="search" maxlength="250" placeholder="Search for a Wikipedia article" autocomplete="off" required>
+          </label>
+          <button class="button primary" type="submit">Search</button>
+        </form>
+        <div id="search-results" class="search-results" aria-live="polite" hidden></div>
+        <div class="suggestions"><span>Try a topic</span>
+          <button type="button" data-action="example" data-title="Nuclear power">Nuclear power</button>
+          <button type="button" data-action="example" data-title="Artificial intelligence">Artificial intelligence</button>
+          <button type="button" data-action="example" data-title="Loch Ness Monster">Loch Ness Monster</button>
+        </div>
+      </div>
+    </section>
+    <section id="start" class="start content">
+      <article>
+        <div class="mode-mark revision-mark" aria-hidden="true"><i></i><i></i><i></i></div>
+        <h2>Follow a revision</h2>
+        <p>Pick an edit on the timeline to inspect the exact changes and see who made them.</p>
+      </article>
+      <article>
+        <div class="mode-mark edition-mark" aria-hidden="true"><i>A</i><i>語</i></div>
+        <h2>Compare language editions</h2>
+        <p>Open a linked edition alongside the original and see how their wording and coverage differ.</p>
+      </article>
+      <article>
+        <div class="mode-mark insight-mark" aria-hidden="true">✦</div>
+        <h2>Check the evidence</h2>
+        <p>AI can flag changes in framing or tone. Each finding links to a passage you can read for yourself.</p>
+      </article>
+    </section>
+    <section id="workspace" class="content workspace" aria-label="Article comparison" hidden></section>
+    <section id="library" class="content library" aria-label="Library" hidden></section>
+    <div id="notification" class="notification" role="status"></div>
+    <dialog id="record-dialog" class="record-dialog">
+      <form id="record-form" method="dialog">
+        <div class="dialog-top"><h2 id="record-title"></h2><button type="button" data-action="dialog-close" class="icon-button" aria-label="Close">×</button></div>
+        <label class="favorite-control"><input name="favorite" type="checkbox"> Favorite</label>
+        <label class="field-label" for="record-tags">Tags separated by commas</label>
+        <input id="record-tags" name="tags" maxlength="250" placeholder="e.g. energy policy, sources">
+        <div class="dialog-actions"><button type="submit" class="button primary">Save</button></div>
+      </form>
+    </dialog>
+  </main>
+  <footer class="site-footer"><div class="content footer-inner"><span>WikiDrift</span><p>Wikipedia text is available under <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener">CC BY-SA 4.0</a>. Article links lead to the source and its contributors.</p></div></footer>
+</body>
+</html>

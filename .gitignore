@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.wrangler/
+.dev.vars*
+.env*
+!.dev.vars.example
+wrangler.private.jsonc
+.DS_Store
+public/assets/app.js
