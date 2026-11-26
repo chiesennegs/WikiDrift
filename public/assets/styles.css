@@ -232,6 +232,33 @@ details summary { cursor: pointer; color: var(--accent-strong); font-size: .9rem
 .section-change { color: var(--accent-strong); font-size: .74rem; font-weight: 700; }
 .section-change.added { color: var(--green); }
 .section-change.removed { color: var(--red); }
+.related-mark { display: inline-block; margin-inline-start: 6px; color: var(--accent-strong); font-size: .73rem; }
+.edit-groups select { width: 100%; }
+.group-events { display: flex; gap: 6px; margin-block: 8px; padding: 4px; overflow-x: auto; overscroll-behavior-inline: contain; }
+.group-events .button { flex: 0 0 auto; display: grid; justify-items: start; gap: 2px; }
+.group-events .button span { color: var(--muted); font-size: .76rem; }
+.group-events .button[aria-pressed="true"] { background: var(--soft-blue); border-color: var(--accent); }
+.group-detail { border-top: 1px solid var(--line); padding-top: 9px; }
+.citation-panel { margin: 10px 13px; padding-top: 8px; border-top: 1px solid var(--line); }
+.citation-panel summary, .group-outcome summary { color: var(--accent-strong); cursor: pointer; font-weight: 650; }
+.group-outcome { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 8px; }
+.group-outcome p { margin: 6px 0; }
+.source-evidence { margin-top: 8px; min-width: 0; overflow-wrap: anywhere; }
+.source-evidence p { margin-bottom: 3px; }
+.source-evidence + .source-evidence { border-top: 1px solid var(--line); padding-top: 8px; }
+.source-delta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 7px 0 4px; }
+.source-column { padding-top: 5px; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+.source-column.added h4 { color: var(--green); }
+.source-column.removed h4 { color: var(--red); }
+.source-column h4 { margin: 0 0 4px; font-size: .875rem; }
+.source-column h4 span, .source-column small { color: var(--muted); font-weight: normal; }
+.source-column ul { display: grid; gap: 6px; padding: 0; margin: 0; list-style: none; font-size: .875rem; }
+.source-column small { display: block; }
+.change-passages { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+.change-passages > div { background: var(--canvas); padding: 6px 8px; border-radius: 6px; }
+@media (max-width: 560px) {
+  .source-delta, .change-passages { grid-template-columns: 1fr; }
+}
 .diff-section-title { padding: 8px 13px; margin: 0; border-bottom: 1px solid var(--line); }
 .dialog-top { display: flex; align-items: start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
 .dialog-top h2 { margin: 0; }

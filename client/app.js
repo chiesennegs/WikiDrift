@@ -1,6 +1,9 @@
 import { editionsWordDiff, editionExcerpts, firstExcerpt, revisionExcerpts, revisionRows, sectionsFromHtml, snippet } from "./compare.js";
 import { createAuthorBadges } from "./author-status.js";
 import { createRevisionPicker } from "./revision-picker.js";
+import { sectionIdentity } from "./citations.js";
+import { editEvidence, groupEdits, nearbyEdits, passageChanges, selectEdits } from "./edit-groups.js";
+import { createRevisionSources } from "./revision-sources.js";
 
 const $ = selector => document.querySelector(selector);
 const html = value => String(value ?? "").replace(/[&<>"']/g, character => ({
@@ -100,6 +103,7 @@ const displayAuthor = revision => revision?.user || (revision?.hidden ? "Author 
 const errorText = error => error instanceof Error ? error.message : "This request could not be completed.";
 const status = (message, error = false) => `<p class="status${error ? " error" : ""}" role="status">${html(message)}</p>`;
 const authors = createAuthorBadges({ api, html, date });
+const revisionSources = createRevisionSources(api);
 const authorName = revision => `${html(displayAuthor(revision))} ${authors.badge(revision?.page?.wiki, revision?.user)}`;
 const openRevisionPicker = createRevisionPicker({
   dialog: $("#revision-picker"), api, html, date, author: authorName, refreshAuthors: authors.refresh,
@@ -161,7 +165,7 @@ function remember(article) {
 }
 
 async function openArticle(wiki, title, page, options = {}) {
-  cancel("search", "article", "history", "comparison", "scan", "analysis", "translation", "credits");
+  cancel("search", "article", "history", "comparison", "scan", "groups", "analysis", "translation", "credits");
   const { signal } = startRequest("article");
   setSearch("");
   state.view = "explore";
@@ -175,6 +179,8 @@ async function openArticle(wiki, title, page, options = {}) {
   state.compare = null;
   state.range = {};
   state.scan = null;
+  state.groupScan = null;
+  state.groupEvidence = new Map();
   render();
   try {
     const article = await api("topic", { wiki, title, page }, { signal });
@@ -280,7 +286,7 @@ function selectEdit(id, section) {
   if (revision?.id === id) void compareRevisions(revision.parent, id, section);
 }
 
-async function compareRevisions(from, to, section) {
+async function compareRevisions(from, to, section, sourceSection) {
   const article = state.article;
   const { comparison, signal } = beginComparison({ from, to });
   try {
@@ -304,12 +310,15 @@ async function compareRevisions(from, to, section) {
     comparison.to = right.id;
     comparison.rows = revisionRows(before, after);
     comparison.section = comparison.rows.some(row => row.key === section) ? section
-      : (comparison.rows.find(row => row.changed) || comparison.rows[0])?.key;
+      : (comparison.rows.find(row => sourceSection && rowSections(row).includes(sourceSection))
+        || comparison.rows.find(row => row.changed) || comparison.rows[0])?.key;
     if (section) {
       comparison.highlight = state.findingsByRevision.get(right.id)?.find(item => item.leftKey === section || item.rightKey === section);
     }
     comparison.credits = right.parent === left?.id || !left ? { items: [right], complete: true } : { items: [] };
-    state.range = { from: left, to: right };
+    comparison.citations = { loading: true, rows: new Map(), other: [] };
+    void loadComparisonCitations(article, comparison, signal, Boolean(section || sourceSection));
+    if (!sourceSection) state.range = { from: left, to: right };
     updateUrl();
   } catch (error) {
     if (!signal.aborted) comparison.error = errorText(error);
@@ -318,6 +327,44 @@ async function compareRevisions(from, to, section) {
       comparison.loading = false;
       render();
       if (section) scrollToEvidence();
+    }
+  }
+}
+
+function rowSections(row) {
+  return [row.left, row.right].filter(Boolean).map(item => sectionIdentity(item.path));
+}
+
+async function loadComparisonCitations(article, comparison, signal, selectedSection) {
+  const result = comparison.citations;
+  const { left, right, rows } = comparison;
+  try {
+    const sources = await revisionSources(article, [left, right], signal);
+    if (signal.aborted) return;
+    if (!sources.has(right.id) || left && !sources.has(left.id)) {
+      result.unavailable = true;
+      return;
+    }
+    const evidence = passageChanges(sources.get(left?.id) ?? [], sources.get(right.id), { includeWording: false });
+    const identities = new Map(rows.flatMap(row => rowSections(row).map(identity => [identity, row.key])));
+    for (const change of evidence) {
+      const key = identities.get(change.right?.sectionKey) ?? identities.get(change.left?.sectionKey);
+      if (!key) result.other.push(change);
+      else {
+        const records = result.rows.get(key) ?? [];
+        records.push(change);
+        result.rows.set(key, records);
+      }
+    }
+    if (!selectedSection && !comparison.sectionPicked && !rows.some(row => row.changed) && result.rows.size) {
+      comparison.section = result.rows.keys().next().value;
+    }
+  } catch {
+    if (!signal.aborted) result.unavailable = true;
+  } finally {
+    if (!signal.aborted) {
+      result.loading = false;
+      render();
     }
   }
 }
@@ -461,6 +508,94 @@ async function scanTimeline() {
   }
 }
 
+const groupHistoryLimit = 5000;
+
+async function groupHistory(article, from, to, signal) {
+  const revisions = new Map();
+  let cursor;
+  do {
+    const page = await api("revisions", {
+      wiki: article.wiki, page: article.id, newer: to.id, older: from.id,
+      cursor, limit: Math.min(500, groupHistoryLimit - revisions.size)
+    }, { signal });
+    for (const revision of page.revisions) revisions.set(revision.id, revision);
+    if (cursor && page.cursor === cursor) throw new Error("Wikipedia stopped advancing through this range.");
+    cursor = page.cursor;
+  } while (cursor && revisions.size < groupHistoryLimit);
+  return { revisions: [...revisions.values()], truncated: Boolean(cursor) };
+}
+
+async function scanGroups() {
+  const article = state.article;
+  if (!article || state.groupScan?.loading) return;
+  const { from, to = article.latest } = state.range;
+  const range = !state.history.author && from && to && to.parent !== from.id
+    && (from.date < to.date || from.date === to.date && from.id < to.id);
+  const cutoff = range ? to : state.history.items[0];
+  if (!cutoff) return;
+  const { signal } = startRequest("groups");
+  const scan = { loading: true, phase: "Reading revision history…", cutoff, range: range ? from : null,
+    checked: 0, skipped: 0, group: 0, event: 0 };
+  const loaded = [...state.history.items];
+  const memo = state.groupEvidence;
+  state.groupScan = scan;
+  render();
+  try {
+    const history = range ? await groupHistory(article, from, to, signal) : { revisions: loaded };
+    scan.truncated = history.truncated;
+    scan.total = history.revisions.length;
+    const candidates = selectEdits(history.revisions, range ? from : null);
+    const index = new Map(history.revisions.map(item => [item.id, item]));
+    if (range) index.set(from.id, from);
+    const evidence = [];
+    const checked = new Set();
+    const endpoint = (await revisionSources(article, [cutoff], signal)).get(cutoff.id);
+
+    async function inspect(edits) {
+      for (let i = 0; i < edits.length; i += 8) {
+        signal.throwIfAborted();
+        const batch = edits.slice(i, i + 8);
+        const ids = batch.filter(item => !memo.has(item.id)).flatMap(item => [item, index.get(item.parent) ?? { id: item.parent }]);
+        const text = ids.length ? await revisionSources(article, ids, signal) : new Map();
+        for (const revision of batch) {
+          checked.add(revision.id);
+          let edit = memo.get(revision.id);
+          if (!edit && (!text.has(revision.parent) || !text.has(revision.id))) {
+            scan.skipped += 1;
+            continue;
+          }
+          if (!edit) {
+            edit = editEvidence(revision, text.get(revision.parent), text.get(revision.id));
+            if (memo.size >= 240) memo.delete(memo.keys().next().value);
+            memo.set(revision.id, edit);
+          }
+          scan.checked += 1;
+          if (edit.changes.length) evidence.push(edit);
+        }
+        scan.phase = `Checked ${scan.checked} edit pairs…`;
+        render();
+      }
+    }
+
+    await inspect(candidates);
+    const initial = groupEdits(evidence);
+    const nearby = nearbyEdits(initial, history.revisions, checked);
+    if (nearby.length) await inspect(nearby);
+    signal.throwIfAborted();
+    scan.groups = groupEdits(evidence, endpoint);
+    scan.markers = new Set(scan.groups.flatMap(group => group.events.map(event => event.revision.id)));
+    scan.citationIds = new Set(evidence.filter(edit => edit.changes.some(change => change.kind === "citation"))
+      .map(edit => edit.revision.id));
+  } catch (error) {
+    if (!signal.aborted) scan.error = errorText(error);
+  } finally {
+    if (!signal.aborted) {
+      scan.loading = false;
+      render();
+    }
+  }
+}
+
 async function translateSection() {
   const comparison = state.compare;
   const right = comparison.rightSections.find(item => item.key === comparison.rightKey);
@@ -513,7 +648,9 @@ function timeline() {
     const active = state.compare?.to === revision.id;
     return `<div class="revision-item${active ? " active" : ""}">
       <button class="revision" type="button" data-action="edit" data-id="${revision.id}"${active ? ' aria-current="true"' : ""}>
-        <time datetime="${html(revision.date)}">${date(revision.date, true)}${findings?.length ? `<span class="finding-dot" aria-label="AI finding">✦ ${findings.length}</span>` : ""}</time>
+        <time datetime="${html(revision.date)}">${date(revision.date, true)}${findings?.length ? `<span class="finding-dot" aria-label="AI finding">✦ ${findings.length}</span>` : ""}
+          ${state.groupScan?.markers?.has(revision.id) ? '<span class="related-mark">Related</span>' : ""}
+          ${state.groupScan?.citationIds?.has(revision.id) ? '<span class="related-mark">Sources</span>' : ""}</time>
         <small class="revision-author" dir="auto">${authorName(revision)}</small>
         ${revision.comment ? `<small dir="auto" title="${html(revision.comment)}">${html(revision.comment)}</small>` : ""}
       </button>${revision.user ? authorControl(revision, true) : ""}
@@ -533,6 +670,7 @@ function timeline() {
     <div class="actions">
       ${timeline.cursor && revisions.length ? `<button type="button" class="button" data-action="more" ${timeline.loading ? "disabled" : ""}>Older edits</button>` : ""}
       <button type="button" class="button" data-action="scan" ${scan?.loading || !timeline.items.some(item => item.parent) ? "disabled" : ""}>✦ Scan 5 edits</button>
+      <button id="group-edits" type="button" class="button" data-action="group-edits"${state.groupScan?.loading || !state.range.from && !timeline.items.some(item => item.parent) ? " disabled" : ""}>Group related edits</button>
     </div>
     ${scanState}
   </aside>`;
@@ -652,11 +790,92 @@ function credits(comparison) {
   </section>`;
 }
 
+function shortLabel(value, limit) {
+  return value.length > limit ? `${value.slice(0, limit - 1).trimEnd()}…` : value;
+}
+
+function sourceLists(sources) {
+  return `<div class="source-delta" role="group" aria-label="Sources for these passages">
+    ${join([["added", "Added"], ["removed", "Removed"], ["kept", "Kept"]].map(([key, label]) => `<div class="source-column ${key}">
+      <h4>${label} <span>${sources[key].length}</span></h4>
+      ${sources[key].length ? `<ul>${join(sources[key].map(source => `<li dir="auto">
+        ${source.url ? external(source.url, source.title) : html(source.title)}
+        ${source.publisher ? `<small>${html(source.publisher)}</small>` : ""}</li>`))}</ul>` : '<p class="muted">None</p>'}
+    </div>`))}
+  </div>`;
+}
+
+function citationEvidence(change) {
+  const { left, right, kind, sources } = change;
+  return `<div class="source-evidence">
+    ${kind === "citation" ? `<p class="muted">Source change on matching wording</p><p dir="auto"><q>${html((right ?? left).text)}</q></p>`
+      : `<div class="change-passages">
+        <div><strong>Before</strong><p dir="auto">${left ? `<q>${html(left.text)}</q>` : "Passage absent"}</p></div>
+        <div><strong>After</strong><p dir="auto">${right ? `<q>${html(right.text)}</q>` : "Passage absent"}</p></div>
+      </div>`}
+    ${sources.added.length || sources.removed.length || sources.kept.length ? sourceLists(sources) : ""}
+  </div>`;
+}
+
+function citationPanel(items, title = "Source changes") {
+  if (!items?.length) return "";
+  return `<details class="citation-panel" open><summary>${html(title)} · ${items.length}</summary>
+    ${join(items.map(citationEvidence))}
+  </details>`;
+}
+
+function editDiffUrl(revision) {
+  return `${urlWiki(revision.page.wiki)}/w/index.php?diff=${Number(revision.id)}&oldid=${Number(revision.parent)}`;
+}
+
+function groupedEdits() {
+  const scan = state.groupScan;
+  if (!scan) return "";
+  const summary = scan.loading ? scan.phase
+    : scan.error || `${scan.checked} edit pairs checked${scan.skipped ? ` · ${scan.skipped} unavailable` : ""}${scan.truncated ? " · latest 5,000 edits in range" : ""}.`;
+  const group = scan.groups?.[scan.group];
+  const event = group?.events[scan.event];
+  return `<section class="panel panel-pad edit-groups" aria-labelledby="groups-title">
+    <div class="panel-title"><h2 id="groups-title">Related edits</h2>
+      ${scan.range ? `<span class="muted">${date(scan.range.date)} – ${date(scan.cutoff.date)}</span>` : '<span class="muted">Loaded timeline</span>'}
+    </div>
+    ${status(summary, Boolean(scan.error))}
+    ${group ? `<label class="field-label" for="group-select">Passage group</label>
+      <select id="group-select">
+        ${join(scan.groups.map((item, index) => `<option value="${index}"${selected(index, scan.group)}>${html(item.section)} · ${html(shortLabel(item.title, 78))} · ${item.events.length} edits</option>`))}
+      </select>
+      <div class="group-events" data-group="${scan.group}" role="group" aria-label="Edits in chronological order">
+        ${join(group.events.map((item, index) => {
+          const kind = item.changes.every(change => change.kind === "citation") ? "Sources" : "Wording";
+          return `<button id="group-event-${index}" type="button" class="button" data-action="group-event" data-index="${index}" aria-pressed="${index === scan.event}">
+            <time datetime="${html(item.revision.date)}">${date(item.revision.date, true)}</time>
+            <span>${item.reverses ? "Reversed · " : ""}${kind}</span>
+          </button>`;
+        }))}
+      </div>
+      <div class="group-detail">
+        <p class="meta">${authorControl(event.revision)}
+          ${external(editDiffUrl(event.revision), "Exact Wikipedia diff")}
+          ${event.reverses ? `<span>Reverses a change from ${external(editDiffUrl(event.reverses), date(event.reverses.date))}</span>` : ""}</p>
+        ${join(event.changes.map(citationEvidence))}
+      </div>
+      <details class="group-outcome">
+        <summary>What remained on ${date(scan.cutoff.date)}</summary>
+        <p>${html(group.outcome?.status || "The ending revision is unavailable for this check.")} ·
+          ${external(revisionUrl(scan.cutoff), "Ending revision")}</p>
+        ${group.outcome?.text ? `<p dir="auto"><q>${html(group.outcome.text)}</q></p>` : ""}
+        ${group.outcome?.sources ? sourceLists(group.outcome.sources) : ""}
+      </details>` : !scan.loading && !scan.error ? status("No related changes were found in this sample.") : ""}
+  </section>`;
+}
+
 function revisionComparison(comparison) {
   const row = comparison.rows.find(item => item.key === comparison.section);
-  const changed = comparison.rows.filter(item => item.changed);
-  const unchanged = comparison.rows.filter(item => !item.changed);
-  const options = rows => join(rows.map(item => `<option value="${html(item.key)}"${selected(item.key, row?.key)}>${html(item.title)}${item.changed ? ` · ${item.change}` : ""}</option>`));
+  const sourceRows = comparison.citations?.rows;
+  const label = item => item.changed ? item.change : sourceRows?.has(item.key) ? "Sources" : "";
+  const changed = comparison.rows.filter(item => label(item));
+  const unchanged = comparison.rows.filter(item => !label(item));
+  const options = rows => join(rows.map(item => `<option value="${html(item.key)}"${selected(item.key, row?.key)}>${html(item.title)}${label(item) ? ` · ${label(item)}` : ""}</option>`));
   return `${insights(comparison)}
     <article class="panel" id="comparison-panel">
       <div class="compare-toolbar">
@@ -669,7 +888,7 @@ function revisionComparison(comparison) {
       </div>
       ${changed.length ? `<div class="change-index" role="group" aria-label="Changed sections">${join(changed.map(item =>
         `<button id="section-${html(item.key)}" type="button" class="section-chip" data-action="section" data-key="${html(item.key)}" aria-pressed="${item.key === row?.key}">
-          <span class="section-change ${item.change.toLowerCase()}">${html(item.change)}</span><span dir="auto">${html(item.title)}</span>
+          <span class="section-change ${label(item).toLowerCase()}">${html(label(item))}</span><span dir="auto">${html(item.title)}</span>
         </button>`))}</div>` : ""}
       ${row ? `<h3 class="diff-section-title" dir="auto">${html(row.title)}</h3>` : ""}
       ${evidenceNote(comparison.highlight)}
@@ -679,6 +898,10 @@ function revisionComparison(comparison) {
         ${passage(row ? formatParts(row.parts, "left") : "")}
         ${passage(row ? formatParts(row.parts, "right") : "")}
       </div>
+      ${citationPanel(sourceRows?.get(row?.key))}
+      ${citationPanel(comparison.citations?.other, "Other source changes")}
+      ${comparison.citations?.loading ? '<p class="source-note" role="status">Checking citations…</p>'
+        : comparison.citations?.unavailable ? '<p class="source-note" role="status">Citation data for this comparison is unavailable.</p>' : ""}
       <p class="source-note">${comparison.left ? external(`${urlWiki(state.article.wiki)}/w/index.php?diff=${comparison.right.id}&oldid=${comparison.left.id}`, "Full Wikipedia diff") : external(revisionUrl(comparison.right), "Original revision")} includes wikitext, citations and formatting.</p>
     </article>
     ${credits(comparison)}`;
@@ -747,6 +970,7 @@ function workspace() {
       ${edition ? editionPicker() : timeline()}
       <div class="stack">
         ${edition ? "" : rangeComparison()}
+        ${edition ? "" : groupedEdits()}
         ${comparison?.loading ? `<div class="panel panel-pad">${status("Loading revision text…")}</div>`
           : comparison?.error ? `<div class="panel panel-pad">${status(comparison.error, true)}</div>`
           : comparison ? edition ? editionComparison(comparison) : revisionComparison(comparison)
@@ -803,12 +1027,26 @@ function render() {
     authors.refresh(list);
   } else if (showWorkspace) {
     const priorScroll = panel.querySelector(".revision-list")?.scrollTop ?? 0;
+    const priorGroupRail = panel.querySelector(".group-events");
+    const groupScroll = priorGroupRail?.scrollLeft ?? 0;
+    const groupOutcomeOpen = panel.querySelector(".group-outcome")?.open;
     const focused = document.activeElement;
     const focusedId = focused?.id;
     const preserveFocus = focusedId && panel.contains(focused);
     panel.innerHTML = workspace();
     const revisions = panel.querySelector(".revision-list");
     if (revisions) revisions.scrollTop = priorScroll;
+    const groupRail = panel.querySelector(".group-events");
+    if (groupRail) {
+      groupRail.scrollLeft = priorGroupRail?.dataset.group === groupRail.dataset.group ? groupScroll : 0;
+      const current = groupRail.querySelector('[aria-pressed="true"]');
+      if (current) {
+        const area = groupRail.getBoundingClientRect();
+        const active = current.getBoundingClientRect();
+        if (active.left < area.left || active.right > area.right) groupRail.scrollLeft += active.left - area.left - 4;
+      }
+      if (groupOutcomeOpen && priorGroupRail?.dataset.group === groupRail.dataset.group) panel.querySelector(".group-outcome").open = true;
+    }
     if (preserveFocus) document.getElementById(focusedId)?.focus({ preventScroll: true });
     authors.refresh(panel);
   }
@@ -839,10 +1077,11 @@ function editRecord(kind, dataset) {
 }
 
 function filterAuthor(author) {
-  cancel("scan", "comparison", "analysis", "translation", "credits");
+  cancel("scan", "groups", "comparison", "analysis", "translation", "credits");
   state.mode = "revisions";
   state.compare = null;
   state.scan = null;
+  state.groupScan = null;
   state.history.author = author;
   state.history.date = "";
   void loadHistory(false, true);
@@ -891,6 +1130,16 @@ document.addEventListener("click", event => {
     }
     case "credits": void loadCredits(); break;
     case "scan": void scanTimeline(); break;
+    case "group-edits": void scanGroups(); break;
+    case "group-event": {
+      const scan = state.groupScan;
+      const event = scan?.groups?.[scan.group]?.events[Number(index)];
+      if (event) {
+        scan.event = Number(index);
+        void compareRevisions(event.revision.parent, event.revision.id, null, event.changes[0].sectionKey);
+      }
+      break;
+    }
     case "analyze": void analyzeComparison(); break;
     case "analyze-section": void analyzeComparison(true); break;
     case "translate": void translateSection(); break;
@@ -906,12 +1155,14 @@ document.addEventListener("click", event => {
     case "finding": selectFinding(scope, Number(index)); break;
     case "section":
       state.compare.section = button.dataset.key;
+      state.compare.sectionPicked = true;
       state.compare.highlight = null;
       render();
       break;
     case "mode":
       if (mode === state.mode) break;
-      cancel("comparison", "analysis", "translation", "credits");
+      cancel("comparison", "groups", "analysis", "translation", "credits");
+      if (state.groupScan?.loading) state.groupScan = null;
       state.mode = mode;
       state.compare = null;
       render();
@@ -931,8 +1182,14 @@ document.addEventListener("change", event => {
       setSearch("");
       break;
     case "edition-picker": void compareEditions(event.target.value); break;
+    case "group-select":
+      state.groupScan.group = Number(event.target.value);
+      state.groupScan.event = 0;
+      render();
+      break;
     case "revision-section":
       comparison.section = event.target.value;
+      comparison.sectionPicked = true;
       comparison.highlight = null;
       render();
       break;
@@ -960,8 +1217,9 @@ document.addEventListener("submit", event => {
   switch (form.id) {
     case "date-form":
       event.preventDefault();
-      cancel("scan");
+      cancel("scan", "groups");
       state.scan = null;
+      state.groupScan = null;
       state.history.date = String(fields.get("date") || "");
       void loadHistory();
       break;

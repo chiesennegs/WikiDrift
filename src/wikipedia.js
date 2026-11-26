@@ -28,7 +28,7 @@ export function wikiFromUrl(value) {
 
 export function makeWikipedia(env, appUrl) {
   const agent = `WikiDrift/0.1 (${env.WIKIMEDIA_CONTACT || appUrl})`;
-  const revisionFields = "ids|timestamp|user|userid|comment|size|flags";
+  const revisionFields = "ids|timestamp|user|userid|comment|size|flags|sha1";
 
   async function request(host, params) {
     const url = new URL(`https://${host}/w/api.php`);
@@ -39,7 +39,7 @@ export function makeWikipedia(env, appUrl) {
         redirect: "manual",
         headers: { Accept: "application/json", "User-Agent": agent },
         signal: AbortSignal.timeout(18000),
-        cf: { cacheEverything: true, cacheTtlByStatus: { "200-299": params.oldid ? 900 : 60, "400-599": -1 } }
+        cf: { cacheEverything: true, cacheTtlByStatus: { "200-299": params.oldid || params.rvprop === "ids|content" ? 900 : 60, "400-599": -1 } }
       });
     } catch (error) {
       console.warn("Wikipedia request failed", error instanceof Error ? error.message : String(error));
@@ -92,6 +92,7 @@ export function makeWikipedia(env, appUrl) {
       hidden: Boolean(item.userhidden),
       comment: item.comment ?? "",
       size: item.size ?? null,
+      hash: item.sha1 || null,
       minor: Boolean(item.minor),
       page: { wiki, id: page.pageid, title: page.title }
     };
@@ -152,10 +153,10 @@ export function makeWikipedia(env, appUrl) {
     },
 
     async revisions(wiki, pageId, options = {}) {
-      const { cursor, date, after, author, newer, older } = options;
+      const { cursor, date, after, author, newer, older, limit = 20 } = options;
       const data = await wikipedia(wiki, {
         action: "query", pageids: pageId, prop: "revisions", rvprop: revisionFields,
-        rvlimit: "20", rvdir: "older",
+        rvlimit: String(limit), rvdir: "older",
         ...(cursor ? { rvcontinue: cursor, continue: "||" } : {}),
         ...(date && !newer ? { rvstart: `${date}T23:59:59Z` } : {}),
         ...(after ? { rvend: `${after}T00:00:00Z` } : {}),
@@ -220,6 +221,12 @@ export function makeWikipedia(env, appUrl) {
       const items = (data.query?.pages ?? []).filter(page => page.ns === 0)
         .flatMap(page => (page.revisions ?? []).map(item => revision(wiki, page, item)));
       return new Map(items.map(item => [item.id, item]));
+    },
+
+    wikitext(wiki, ids) {
+      return request(`${wikiCode(wiki)}.wikipedia.org`, {
+        action: "query", revids: ids.join("|"), prop: "revisions", rvprop: "ids|content", rvslots: "main"
+      });
     },
 
     snapshot(wiki, id) {

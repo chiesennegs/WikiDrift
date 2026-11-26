@@ -29,7 +29,7 @@ async function api(request, env, ctx) {
 
   const wiki = makeWikipedia(env, origin);
   if (pathname === "/api/languages") return json(await wiki.languages());
-  if (!["/api/search", "/api/topic", "/api/revisions", "/api/activity", "/api/history-start", "/api/author-status", "/api/metadata", "/api/snapshot"].includes(pathname)) {
+  if (!["/api/search", "/api/topic", "/api/revisions", "/api/activity", "/api/history-start", "/api/author-status", "/api/metadata", "/api/snapshot", "/api/wikitext"].includes(pathname)) {
     throw new AppError(404, "This WikiDrift endpoint does not exist.");
   }
   const code = wikiCode(params.get("wiki"));
@@ -51,8 +51,10 @@ async function api(request, env, ctx) {
     const date = dateParameter(params, "date");
     const after = dateParameter(params, "after");
     if (after && (!date || after > date || newer)) throw new AppError(400, "Choose a valid date range.");
+    const limit = params.has("limit") ? positiveId(params.get("limit")) : 20;
+    if (limit > 500) throw new AppError(400, "Choose up to 500 revision records.");
     const options = { cursor: parameter(params, "cursor", 120), date, after,
-      author: parameter(params, "author", 250), newer, older };
+      author: parameter(params, "author", 250), newer, older, limit };
     return json(await wiki.revisions(code, positiveId(params.get("page")), options));
   }
   if (pathname === "/api/history-start") {
@@ -79,8 +81,15 @@ async function api(request, env, ctx) {
     return json([...items.values()]);
   }
 
-  const response = await wiki.snapshot(code, positiveId(params.get("id")));
-  // Stream historical article HTML inside Wikipedia's JSON envelope.
+  let response;
+  if (pathname === "/api/wikitext") {
+    const ids = parameter(params, "ids", 400).split(",");
+    if (ids.length > 20) throw new AppError(400, "Choose up to twenty revisions.");
+    response = await wiki.wikitext(code, [...new Set(ids.map(positiveId))].sort((left, right) => left - right));
+  } else {
+    response = await wiki.snapshot(code, positiveId(params.get("id")));
+  }
+  // Stream historical content inside Wikipedia's JSON envelope.
   return new Response(response.body, {
     headers: {
       "Content-Type": "application/json; charset=utf-8",
