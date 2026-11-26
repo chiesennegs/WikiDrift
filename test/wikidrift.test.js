@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { editionExcerpts, editionsWordDiff, revisionExcerpts, revisionRows } from "../client/compare.js";
+import { calendarCount, monthWindow } from "../client/revision-picker.js";
 import worker from "../src/worker.js";
 
 const section = (key, title, text, path = [title]) => ({ key, title, text, path });
@@ -64,4 +65,59 @@ test("AI unavailability leaves the other Worker routes independent", async () =>
   assert.match((await disabled.json()).error, /disabled/);
   const invalidHost = await worker.fetch(new Request("https://example.com/api/topic?wiki=evil.example&title=Test"), {});
   assert.equal(invalidHost.status, 400);
+});
+
+test("calendar periods include leap days and identify incomplete activity", () => {
+  assert.deepEqual(monthWindow(2024, 2), { first: "2024-02-01", last: "2024-02-29", days: 29 });
+  const days = { "2024-02-29": 3, "2024-02-14": 500, "2024-03-01": 7 };
+  const partial = { days, cursor: "next", oldest: "2024-02-14" };
+  assert.deepEqual(calendarCount(partial, "2024-02"), { count: 503, complete: false });
+  assert.deepEqual(calendarCount(partial, "2024-03"), { count: 7, complete: true });
+  assert.deepEqual(calendarCount(partial, "2024-01"), { count: 0, complete: false });
+  assert.deepEqual(calendarCount({ ...partial, cursor: null }, "2024-01"), { count: 0, complete: true });
+});
+
+test("activity counts edits by UTC day and exposes Wikimedia's continuation", async t => {
+  t.mock.method(globalThis, "fetch", async url => {
+    const { searchParams } = url;
+    assert.equal(searchParams.get("rvstart"), "2024-12-31T23:59:59Z");
+    assert.equal(searchParams.get("rvend"), "2024-01-01T00:00:00Z");
+    assert.equal(searchParams.get("rvcontinue"), "old-cursor");
+    return Response.json({ continue: { rvcontinue: "next-cursor" }, query: { pages: [
+      { ns: 0, revisions: [{ timestamp: "2024-02-29T23:59:59Z" }, { timestamp: "2024-02-29T00:00:00Z" }] }
+    ] } });
+  });
+  const result = await worker.fetch(new Request("https://example.com/api/activity?wiki=en&page=2&year=2024&cursor=old-cursor"), {});
+  assert.equal(result.status, 200);
+  assert.deepEqual(await result.json(), { days: { "2024-02-29": 2 }, cursor: "next-cursor", oldest: "2024-02-29" });
+});
+
+test("a date range filters revision browsing independently of the main timeline", async t => {
+  t.mock.method(globalThis, "fetch", async url => {
+    assert.equal(url.searchParams.get("rvstart"), "2024-02-29T23:59:59Z");
+    assert.equal(url.searchParams.get("rvend"), "2024-02-01T00:00:00Z");
+    return Response.json({ query: { pages: [{ ns: 0, pageid: 2, title: "Example", revisions: [
+      { revid: 123, parentid: 122, user: "Example", timestamp: "2024-02-12T08:00:00Z" }
+    ] }] } });
+  });
+  const result = await worker.fetch(new Request("https://example.com/api/revisions?wiki=en&page=2&date=2024-02-29&after=2024-02-01"), {});
+  assert.equal(result.status, 200);
+  assert.equal((await result.json()).revisions[0].id, 123);
+});
+
+test("author status distinguishes local restrictions, global restrictions, and unlocked accounts", async t => {
+  t.mock.method(globalThis, "fetch", async url => {
+    assert.equal(url.searchParams.get("usprop"), "blockinfo");
+    assert.equal(url.searchParams.get("gusprop"), "locked");
+    return Response.json({ query: { users: [
+      { name: "Case A", blockid: 5, blockexpiry: "infinite" },
+      { name: "Case B", blockedby: "Blocked by", blockpartial: true, blockexpiry: "2028-01-01T00:00:00Z" },
+      { name: "Case C" }, { name: "Case D" }, { name: "Case E" }
+    ], globalusers: [{ name: "Case C", locked: true }, { name: "Case E", locked: false }],
+    globalblocks: [{ target: "Case D", expiry: "infinite" }] } });
+  });
+  const params = new URLSearchParams({ wiki: "en", users: "Case A|Case B|Case C|Case D|Case E" });
+  const result = await worker.fetch(new Request(`https://example.com/api/author-status?${params}`), {});
+  assert.equal(result.status, 200);
+  assert.deepEqual((await result.json()).map(item => item.restriction), ["local-block", "partial-block", "global-lock", "global-block", null]);
 });

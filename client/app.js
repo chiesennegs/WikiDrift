@@ -1,4 +1,6 @@
 import { editionsWordDiff, editionExcerpts, firstExcerpt, revisionExcerpts, revisionRows, sectionsFromHtml, snippet } from "./compare.js";
+import { createAuthorBadges } from "./author-status.js";
+import { createRevisionPicker } from "./revision-picker.js";
 
 const $ = selector => document.querySelector(selector);
 const html = value => String(value ?? "").replace(/[&<>"']/g, character => ({
@@ -97,6 +99,15 @@ const languageName = wiki => state.languages.find(language => language.wiki === 
 const displayAuthor = revision => revision?.user || (revision?.hidden ? "Author hidden" : "Anonymous editor");
 const errorText = error => error instanceof Error ? error.message : "This request could not be completed.";
 const status = (message, error = false) => `<p class="status${error ? " error" : ""}" role="status">${html(message)}</p>`;
+const authors = createAuthorBadges({ api, html, date });
+const authorName = revision => `${html(displayAuthor(revision))} ${authors.badge(revision?.page?.wiki, revision?.user)}`;
+const openRevisionPicker = createRevisionPicker({
+  dialog: $("#revision-picker"), api, html, date, author: authorName, refreshAuthors: authors.refresh,
+  onPick(side, revision) {
+    state.range[side] = revision;
+    render();
+  }
+});
 
 function selected(value, current) {
   return String(value) === String(current) ? " selected" : "";
@@ -162,6 +173,7 @@ async function openArticle(wiki, title, page, options = {}) {
   state.target = options.edition || "";
   state.findingsByRevision = new Map();
   state.compare = null;
+  state.range = {};
   state.scan = null;
   render();
   try {
@@ -297,6 +309,7 @@ async function compareRevisions(from, to, section) {
       comparison.highlight = state.findingsByRevision.get(right.id)?.find(item => item.leftKey === section || item.rightKey === section);
     }
     comparison.credits = right.parent === left?.id || !left ? { items: [right], complete: true } : { items: [] };
+    state.range = { from: left, to: right };
     updateUrl();
   } catch (error) {
     if (!signal.aborted) comparison.error = errorText(error);
@@ -487,7 +500,7 @@ function authorControl(revision, icon = false) {
   const editing = `data-action="edit-author" data-wiki="${html(wiki)}" data-author="${html(revision.user)}" data-page="${id}" data-title="${html(title)}"`;
   return icon
     ? `<button type="button" class="icon-button" ${editing} title="${html(revision.user)}" aria-label="Manage author ${html(revision.user)}">···</button>`
-    : `${external(contributionsUrl(wiki, revision.user), revision.user)} <button type="button" class="icon-button" ${editing} aria-label="Manage author ${html(revision.user)}">···</button>`;
+    : `${external(contributionsUrl(wiki, revision.user), revision.user)} ${authors.badge(wiki, revision.user)} <button type="button" class="icon-button" ${editing} aria-label="Manage author ${html(revision.user)}">···</button>`;
 }
 
 function timeline() {
@@ -501,7 +514,8 @@ function timeline() {
     return `<div class="revision-item${active ? " active" : ""}">
       <button class="revision" type="button" data-action="edit" data-id="${revision.id}"${active ? ' aria-current="true"' : ""}>
         <time datetime="${html(revision.date)}">${date(revision.date, true)}${findings?.length ? `<span class="finding-dot" aria-label="AI finding">✦ ${findings.length}</span>` : ""}</time>
-        <small dir="auto" title="${html(revision.comment)}">${html(displayAuthor(revision))}${revision.comment ? ` · ${html(revision.comment)}` : ""}</small>
+        <small class="revision-author" dir="auto">${authorName(revision)}</small>
+        ${revision.comment ? `<small dir="auto" title="${html(revision.comment)}">${html(revision.comment)}</small>` : ""}
       </button>${revision.user ? authorControl(revision, true) : ""}
     </div>`;
   });
@@ -512,7 +526,7 @@ function timeline() {
       <input id="timeline-date" type="date" name="date" max="${today}" value="${html(timeline.date)}">
       <button class="button" type="submit">Jump to date</button>
     </form>
-    ${timeline.author ? `<div class="active-author">Edits by <b dir="auto">${html(timeline.author)}</b> <button type="button" class="icon-button" data-action="clear-author" aria-label="Clear author filter">×</button></div>` : ""}
+    ${timeline.author ? `<div class="active-author">Edits by <b dir="auto">${html(timeline.author)}</b> ${authors.badge(state.article.wiki, timeline.author)} <button type="button" class="icon-button" data-action="clear-author" aria-label="Clear author filter">×</button></div>` : ""}
     ${revisions.length ? `<div class="revision-list">${join(revisions)}</div>` : ""}
     ${timeline.loading ? status("Loading edits…") : timeline.error ? status(timeline.error, true)
       : !revisions.length ? status("No edits found for this selection.") : ""}
@@ -525,16 +539,21 @@ function timeline() {
 }
 
 function rangeComparison() {
-  const current = state.compare;
-  const items = new Map(state.history.items.map(item => [item.id, item]));
-  [current?.left, current?.right, state.article.latest].filter(Boolean).forEach(revision => items.set(revision.id, revision));
-  const ordered = [...items.values()].sort((left, right) => right.date.localeCompare(left.date) || right.id - left.id);
-  const options = value => join(ordered.map(item => `<option value="${item.id}"${selected(item.id, value)}>${date(item.date, true)} · ${html(displayAuthor(item))}</option>`));
-  return `<form id="range-form" class="range panel panel-pad">
-    <label><span class="field-label">Earlier revision</span><select name="from" required><option value="">Select a revision</option>${options(current?.from)}</select></label>
-    <label><span class="field-label">Later revision</span><select name="to" required><option value="">Select a revision</option>${options(current?.to)}</select></label>
-    <button class="button" type="submit">Compare dates</button>
-  </form>`;
+  const { from, to = state.article.latest } = state.range;
+  const same = from && from.id === to?.id;
+  const control = (side, title, revision) => `<div class="range-field">
+    <span class="field-label" id="range-${side}-label">${title}</span>
+    <button id="range-${side}" type="button" class="button range-pick" aria-haspopup="dialog"
+      aria-labelledby="range-${side}-label range-${side}" data-action="pick-date" data-side="${side}"${state.article.latest ? "" : " disabled"}>
+      ${revision ? `${date(revision.date, true)} UTC` : "Browse years and dates"}
+    </button>
+  </div>`;
+  return `<div class="range panel panel-pad">
+    ${control("from", "Earlier revision", from)}
+    ${control("to", "Later revision", to)}
+    <button class="button primary range-compare" type="button" data-action="compare-range"${!from || !to || same ? " disabled" : ""}>Compare dates</button>
+    ${same ? '<p class="range-message muted" role="status">Choose two different revisions.</p>' : ""}
+  </div>`;
 }
 
 function editionPicker() {
@@ -635,16 +654,24 @@ function credits(comparison) {
 
 function revisionComparison(comparison) {
   const row = comparison.rows.find(item => item.key === comparison.section);
-  const changed = comparison.rows.filter(item => item.changed).length;
+  const changed = comparison.rows.filter(item => item.changed);
+  const unchanged = comparison.rows.filter(item => !item.changed);
+  const options = rows => join(rows.map(item => `<option value="${html(item.key)}"${selected(item.key, row?.key)}>${html(item.title)}${item.changed ? ` · ${item.change}` : ""}</option>`));
   return `${insights(comparison)}
     <article class="panel" id="comparison-panel">
       <div class="compare-toolbar">
-        <div><h2>Side-by-side diff</h2><span class="muted">${changed} changed ${changed === 1 ? "section" : "sections"}</span></div>
+        <div><h2>Side-by-side diff</h2><span class="muted">${changed.length} changed ${changed.length === 1 ? "section" : "sections"}</span></div>
         <label><span class="sr-only">Jump to a section</span><select id="revision-section">
-          ${join(comparison.rows.map(item => `<option value="${html(item.key)}"${selected(item.key, row?.key)}>${html(item.title)}${item.changed ? ` · ${item.change}` : ""}</option>`))}
+          ${changed.length ? `<optgroup label="Changed sections">${options(changed)}</optgroup>` : ""}
+          ${unchanged.length ? `<optgroup label="Unchanged sections">${options(unchanged)}</optgroup>` : ""}
         </select></label>
         <div class="legend"><span class="removed">Removed</span><span class="added">Added</span></div>
       </div>
+      ${changed.length ? `<div class="change-index" role="group" aria-label="Changed sections">${join(changed.map(item =>
+        `<button id="section-${html(item.key)}" type="button" class="section-chip" data-action="section" data-key="${html(item.key)}" aria-pressed="${item.key === row?.key}">
+          <span class="section-change ${item.change.toLowerCase()}">${html(item.change)}</span><span dir="auto">${html(item.title)}</span>
+        </button>`))}</div>` : ""}
+      ${row ? `<h3 class="diff-section-title" dir="auto">${html(row.title)}</h3>` : ""}
       ${evidenceNote(comparison.highlight)}
       <div class="split">
         ${splitHead(comparison.left, "Earlier revision")}
@@ -739,7 +766,7 @@ function libraryArticle(record, history = false) {
 
 function libraryAuthor(record) {
   return `<li>
-    <div>${external(contributionsUrl(record.wiki, record.user), record.user)} <span class="muted"> · ${html(languageName(record.wiki))}</span> ${tags(record)}</div>
+    <div>${external(contributionsUrl(record.wiki, record.user), record.user)} ${authors.badge(record.wiki, record.user)} <span class="muted"> · ${html(languageName(record.wiki))}</span> ${tags(record)}</div>
     <div class="actions">
       ${record.article ? `<button type="button" class="button" data-action="filter-library-author" data-wiki="${html(record.wiki)}" data-page="${Number(record.article.id)}" data-author="${html(record.user)}" data-title="${html(record.article.title)}">Edits on ${html(record.article.title)}</button>` : ""}
       <button type="button" class="button" data-action="edit-author" data-wiki="${html(record.wiki)}" data-page="${Number(record.article?.id || 0)}" data-author="${html(record.user)}" data-title="${html(record.article?.title)}">${record.favorite ? "★" : "☆"} Edit tags</button>
@@ -773,6 +800,7 @@ function render() {
   $(inLibrary ? "#library-nav" : "#explore-nav").setAttribute("aria-current", "page");
   if (inLibrary) {
     list.innerHTML = libraryContent();
+    authors.refresh(list);
   } else if (showWorkspace) {
     const priorScroll = panel.querySelector(".revision-list")?.scrollTop ?? 0;
     const focused = document.activeElement;
@@ -782,6 +810,7 @@ function render() {
     const revisions = panel.querySelector(".revision-list");
     if (revisions) revisions.scrollTop = priorScroll;
     if (preserveFocus) document.getElementById(focusedId)?.focus({ preventScroll: true });
+    authors.refresh(panel);
   }
 }
 
@@ -849,6 +878,12 @@ document.addEventListener("click", event => {
     case "open": void openArticle(wiki, title, Number(page)); break;
     case "example": void openArticle("en", title); break;
     case "more": void loadHistory(true); break;
+    case "pick-date": {
+      const side = button.dataset.side;
+      openRevisionPicker(state.article, side, state.range[side]);
+      break;
+    }
+    case "compare-range": void compareRevisions(state.range.from.id, (state.range.to ?? state.article.latest).id); break;
     case "edit": {
       const finding = state.findingsByRevision.get(Number(id))?.[0];
       selectEdit(Number(id), finding?.rightKey || finding?.leftKey);
@@ -869,6 +904,11 @@ document.addEventListener("click", event => {
     case "filter-library-author": void openArticle(wiki, title, Number(page), { author }); break;
     case "clear-author": filterAuthor(""); break;
     case "finding": selectFinding(scope, Number(index)); break;
+    case "section":
+      state.compare.section = button.dataset.key;
+      state.compare.highlight = null;
+      render();
+      break;
     case "mode":
       if (mode === state.mode) break;
       cancel("comparison", "analysis", "translation", "credits");
@@ -924,10 +964,6 @@ document.addEventListener("submit", event => {
       state.scan = null;
       state.history.date = String(fields.get("date") || "");
       void loadHistory();
-      break;
-    case "range-form":
-      event.preventDefault();
-      void compareRevisions(Number(fields.get("from")), Number(fields.get("to")));
       break;
     case "record-form": {
       event.preventDefault();

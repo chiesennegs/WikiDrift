@@ -8,10 +8,12 @@ WikiDrift shows how Wikipedia articles change over time and how different langua
 
 ## Explore
 
-- **Revision history** lists edits by date, with author names, edit summaries and links to the original Wikipedia revisions. Select an edit to compare it with its parent. Pick two revisions to compare a longer range and list the contributors between them.
+- **Revision history** lists edits by date, with author names, edit summaries and links to the original Wikipedia revisions. Select an edit to compare it with its parent, or choose two revisions independently using the year, month and day activity charts. High edit counts can help you find periods to investigate. The diff lists changed sections and contributors in the range.
 - **Language editions** offers Wikipedia’s linked editions of the same article. Compare original passages side by side, or ask Workers AI to translate the selected comparison passage and show a word diff. Each edition links to its current revision and full contributor history.
 - **AI analysis** reviews bounded excerpts for differences in tone, framing, coverage and attribution. Findings cite passages and link to their sections. **Scan 5 edits** examines the first five edits in the current timeline that have a parent and flags individual edits with supporting evidence.
 - **Library** keeps article and author favorites, tags and the last 100 viewed articles in local storage. Open an author menu beside an edit to filter the timeline to that author’s edits on the current article. Named author accounts are scoped to each Wikipedia edition. Anonymous edits link to the original revision.
+
+Author badges reflect current Wikipedia blocks and Wikimedia global blocks or account locks.
 
 Both comparisons use readable article prose. A linked Wikipedia diff supplies the underlying wikitext, citations and formatting. AI findings reflect the passages examined and do not establish an editor’s beliefs or intent. Translated word diffs may reflect translation choices.
 

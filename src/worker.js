@@ -11,8 +11,8 @@ function parameter(params, key, length) {
   return value;
 }
 
-function dateParameter(params) {
-  const date = params.get("date");
+function dateParameter(params, key) {
+  const date = params.get(key);
   if (!date) return "";
   const stamp = Date.parse(date);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(stamp) || new Date(stamp).toISOString().slice(0, 10) !== date) {
@@ -29,7 +29,7 @@ async function api(request, env, ctx) {
 
   const wiki = makeWikipedia(env, origin);
   if (pathname === "/api/languages") return json(await wiki.languages());
-  if (!["/api/search", "/api/topic", "/api/revisions", "/api/metadata", "/api/snapshot"].includes(pathname)) {
+  if (!["/api/search", "/api/topic", "/api/revisions", "/api/activity", "/api/history-start", "/api/author-status", "/api/metadata", "/api/snapshot"].includes(pathname)) {
     throw new AppError(404, "This WikiDrift endpoint does not exist.");
   }
   const code = wikiCode(params.get("wiki"));
@@ -48,9 +48,29 @@ async function api(request, env, ctx) {
     const newer = params.has("newer") ? positiveId(params.get("newer")) : null;
     const older = params.has("older") ? positiveId(params.get("older")) : null;
     if (Boolean(newer) !== Boolean(older)) throw new AppError(400, "Choose both revisions for the range.");
-    const options = { cursor: parameter(params, "cursor", 120), date: dateParameter(params),
+    const date = dateParameter(params, "date");
+    const after = dateParameter(params, "after");
+    if (after && (!date || after > date || newer)) throw new AppError(400, "Choose a valid date range.");
+    const options = { cursor: parameter(params, "cursor", 120), date, after,
       author: parameter(params, "author", 250), newer, older };
     return json(await wiki.revisions(code, positiveId(params.get("page")), options));
+  }
+  if (pathname === "/api/history-start") {
+    return json(await wiki.historyStart(code, positiveId(params.get("page"))));
+  }
+  if (pathname === "/api/activity") {
+    const year = Number(params.get("year"));
+    if (!Number.isInteger(year) || year < 1900 || year > new Date().getUTCFullYear()) {
+      throw new AppError(400, "Choose a valid revision year.");
+    }
+    return json(await wiki.activity(code, positiveId(params.get("page")), year, parameter(params, "cursor", 120)));
+  }
+  if (pathname === "/api/author-status") {
+    const authors = [...new Set(parameter(params, "users", 8000).split("|").filter(Boolean))];
+    if (!authors.length || authors.length > 25 || authors.some(name => name.length > 250 || /[:#\u0000-\u001f]/u.test(name))) {
+      throw new AppError(400, "Choose up to 25 named Wikipedia accounts.");
+    }
+    return json(await wiki.authorStatus(code, authors));
   }
   if (pathname === "/api/metadata") {
     const ids = (params.get("ids") ?? "").split(",");

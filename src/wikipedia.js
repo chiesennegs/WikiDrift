@@ -71,6 +71,12 @@ export function makeWikipedia(env, appUrl) {
     return query(`${wikiCode(wiki)}.wikipedia.org`, params);
   }
 
+  function revisionPage(data) {
+    const page = data.query?.pages?.[0];
+    if (!page || page.missing || page.ns !== 0) throw new AppError(404, "That article is unavailable.");
+    return page;
+  }
+
   function revision(wiki, page, item) {
     if (!item?.revid) return null;
     // Wikimedia exposes some historical edits under IP addresses. Keep the audit
@@ -146,21 +152,65 @@ export function makeWikipedia(env, appUrl) {
     },
 
     async revisions(wiki, pageId, options = {}) {
-      const { cursor, date, author, newer, older } = options;
+      const { cursor, date, after, author, newer, older } = options;
       const data = await wikipedia(wiki, {
         action: "query", pageids: pageId, prop: "revisions", rvprop: revisionFields,
         rvlimit: "20", rvdir: "older",
         ...(cursor ? { rvcontinue: cursor, continue: "||" } : {}),
-        ...(date ? { rvstart: `${date}T23:59:59Z` } : {}),
+        ...(date && !newer ? { rvstart: `${date}T23:59:59Z` } : {}),
+        ...(after ? { rvend: `${after}T00:00:00Z` } : {}),
         ...(author ? { rvuser: author } : {}),
         ...(newer && older ? { rvstartid: newer, rvendid: older } : {})
       });
-      const page = data.query?.pages?.[0];
-      if (!page || page.missing || page.ns !== 0) throw new AppError(404, "That article is unavailable.");
+      const page = revisionPage(data);
       return {
         revisions: (page.revisions ?? []).filter(item => item.revid !== older).map(item => revision(wiki, page, item)),
         cursor: data.continue?.rvcontinue ?? null
       };
+    },
+
+    async historyStart(wiki, pageId) {
+      const data = await wikipedia(wiki, {
+        action: "query", pageids: pageId, prop: "revisions", rvprop: "timestamp", rvdir: "newer", rvlimit: "1"
+      });
+      return { first: revisionPage(data).revisions?.[0]?.timestamp ?? null };
+    },
+
+    async activity(wiki, pageId, year, cursor) {
+      const data = await wikipedia(wiki, {
+        action: "query", pageids: pageId, prop: "revisions", rvprop: "timestamp", rvdir: "older", rvlimit: "500",
+        rvstart: `${year}-12-31T23:59:59Z`, rvend: `${year}-01-01T00:00:00Z`,
+        ...(cursor ? { rvcontinue: cursor, continue: "||" } : {})
+      });
+      const revisions = revisionPage(data).revisions ?? [];
+      const days = {};
+      for (const item of revisions) {
+        const day = item.timestamp?.slice(0, 10);
+        if (day) days[day] = (days[day] ?? 0) + 1;
+      }
+      return { days, cursor: data.continue?.rvcontinue ?? null, oldest: revisions.at(-1)?.timestamp?.slice(0, 10) ?? null };
+    },
+
+    async authorStatus(wiki, authors) {
+      const names = authors.join("|");
+      const data = await wikipedia(wiki, {
+        action: "query", list: "users|globalusers|globalblocks",
+        ususers: names, usprop: "blockinfo", gususers: names, gusprop: "locked",
+        bgtargets: names, bgprop: "target|expiry", bglimit: "max"
+      });
+      const users = new Map((data.query?.users ?? []).map(item => [item.name, item]));
+      const locked = new Set((data.query?.globalusers ?? []).filter(item => item.locked === true).map(item => item.name));
+      const globalBlocks = new Map((data.query?.globalblocks ?? []).map(item => [item.target, item]));
+      return authors.map(name => {
+        const user = users.get(name);
+        const global = globalBlocks.get(name);
+        if (locked.has(name)) return { name, restriction: "global-lock" };
+        if (global) return { name, restriction: "global-block", expiry: global.expiry };
+        if (user?.blockid || user?.blockedby || user?.blockexpiry) {
+          return { name, restriction: user.blockpartial ? "partial-block" : "local-block", expiry: user.blockexpiry };
+        }
+        return { name, restriction: null };
+      });
     },
 
     async metadata(wiki, ids) {
